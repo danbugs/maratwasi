@@ -1,4 +1,3 @@
-use anyhow::bail;
 use nix::unistd::pivot_root;
 use std::{
     os::unix::prelude::PermissionsExt,
@@ -109,6 +108,14 @@ fn parent() {
         exit(1);
     });
 
+    let pid = child.id();
+
+    let _ = Command::new("/usr/local/bin/netsetgo")
+        .arg("-pid")
+        .arg(pid.to_string())
+        .status()
+        .expect("failed to execute process");
+    
     // wait for child to exit
     let _ = child.wait().unwrap_or_else(|e| {
         eprintln!("Failed to wait for child: {}", e);
