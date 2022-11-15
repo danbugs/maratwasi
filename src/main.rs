@@ -1,50 +1,92 @@
 use std::process::{exit, Command};
 
 fn main() {
-    // unshare the mount, uts, ipc, pid, net, and user namespaces
-    let mut unshare = Command::new("unshare")
-        .arg("--fork")
-        .arg("--mount")
-        .arg("--uts")
-        .arg("--ipc")
-        .arg("--pid")
-        .arg("--net")
-        .arg("--user")
-        .arg("/bin/sh")
-        .spawn()
-        .expect("failed to execute unshare");
-    
-    let pid = unshare.id();
-    println!("unshare pid: {}", pid);
-    
-    // // set newuidmap to 0 1000 1 for pid
-    // let mut cmd = Command::new("newuidmap")
-    //     .arg(pid.to_string())
-    //     .arg("0")
-    //     .arg("1000")
-    //     .arg("1")
-    //     .status()
-    //     .expect("failed to execute newuidmap");
+    // get arguments
+    let args: Vec<String> = std::env::args().collect();
 
-    // // set newgidmap to 0 1000 1 for pid
-    // let mut cmd = Command::new("newgidmap")
-    //     .arg(pid.to_string())
-    //     .arg("0")
-    //     .arg("1000")
-    //     .arg("1")
-    //     .status()
-    //     .expect("failed to execute newgidmap");
-
-    // // set hostname to "container-<pid>"
-    // let hostname = format!("container-{}", pid);
-    // Command::new("hostname")
-    //     .arg(hostname)
-    //     .status()
-    //     .expect("failed to execute hostname");
-    
-    // wait for the child process to exit
-    let status = unshare.wait().expect("failed to wait on child");
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
+    // match if argument is parent or child and call parent and child functions
+    match args[1].as_str() {
+        "parent" => parent(),
+        "child" => child(),
+        _ => println!("Invalid argument"),
     }
+}
+
+fn parent() {
+    // parent says hello
+    println!("Hello from parent");
+
+    // vector with namespaces to unshare (i.e., mount, uts, ipc, pid, net, and user)
+    let namespaces = vec![
+        unshare::Namespace::Mount,
+        unshare::Namespace::Uts,
+        unshare::Namespace::Ipc,
+        unshare::Namespace::Pid,
+        unshare::Namespace::Net,
+        unshare::Namespace::User,
+    ];
+
+    let uid_map = unshare::UidMap {
+        inside_uid: 0,
+        outside_uid: 1000,
+        count: 1,
+    };
+
+    let gid_map = unshare::GidMap {
+        inside_gid: 0,
+        outside_gid: 1000,
+        count: 1,
+    };
+
+    let mut executor = unshare::Command::new("/proc/self/exe");
+
+    let executor = executor.arg("child").arg("/bin/sh");
+
+    let executor = executor.unshare(&namespaces);
+
+    let executor = executor.set_id_maps(vec![uid_map], vec![gid_map]);
+
+    // This program depends on uidmap being installed on the system - to install it on Ubuntu, run: `sudo apt install uidmap`
+    let executor = executor.set_id_map_commands("/usr/bin/newuidmap", "/usr/bin/newgidmap");
+
+    let mut child = executor.spawn().unwrap_or_else(|e| {
+        eprintln!("Failed to spawn process: {}", e);
+        exit(1);
+    });
+
+    // wait for child to exit
+    let _ = child.wait().unwrap_or_else(|e| {
+        eprintln!("Failed to wait for child: {}", e);
+        exit(1);
+    });
+}
+
+fn child() {
+    // child says hello
+    println!("Hello from child");
+
+    let mut executor = unshare::Command::new("/bin/sh");
+
+    // get pid
+    let pid = std::process::id();
+
+    // set hostname to container-<pid>
+    let _ = Command::new("hostname")
+        .arg(format!("container-{}", pid))
+        .status()
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to run process: {}", e);
+            exit(1);
+        });
+
+    let mut child = executor.spawn().unwrap_or_else(|e| {
+        eprintln!("Failed to spawn process: {}", e);
+        exit(1);
+    });
+
+    // wait for child to exit
+    let _ = child.wait().unwrap_or_else(|e| {
+        eprintln!("Failed to wait for child: {}", e);
+        exit(1);
+    });
 }
